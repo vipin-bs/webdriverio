@@ -128,5 +128,8 @@
     "typescript": "^5.3.3",
     "unzipper": "^0.12.1",
     "vitest": "^1.2.2"
+  },
+  "dependencies": {
+    "@browserstack/wdio-browserstack-service": "^2.0.1"
   }
 }

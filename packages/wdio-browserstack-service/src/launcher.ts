@@ -371,6 +371,28 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
         this._updateCaps(capabilities, 'testhubBuildUuid')
         this._updateCaps(capabilities, 'buildProductMap')
 
+        // Apply test orchestration if enabled
+        try {
+            // Import dynamically to avoid circular dependencies
+            const { applyOrchestrationIfEnabled } = await import('./testorchestration/apply-orchestration.js')
+            
+            if (config.specs && config.specs.length > 0 && this._options.testObservability) {
+                BStackLogger.info('Applying test orchestration');
+                // Ensure we're passing string[] to applyOrchestrationIfEnabled
+                const specs = (config.specs as string[]).filter(spec => typeof spec === 'string');
+                const orderedSpecs = await applyOrchestrationIfEnabled(specs, this._options)
+                
+                // Update the specs array with the ordered specs
+                if (orderedSpecs && orderedSpecs.length > 0) {
+                    // Clear the specs array and add the ordered specs
+                    config.specs = orderedSpecs;
+                    BStackLogger.info(`Test specs updated with orchestrated order`)
+                }
+            }
+        } catch (error) {
+            BStackLogger.error(`Error applying test orchestration: ${error}`)
+        }
+
         // local binary will be handled by CLI
         if (BrowserstackCLI.getInstance().isRunning()) {
             return

@@ -36,7 +36,9 @@ import type {
     TestSessionEventResponse,
     LogCreatedEventResponse,
     DriverInitResponse,
-    FetchDriverExecuteParamsEventResponse
+    FetchDriverExecuteParamsEventResponse,
+    TestOrchestrationRequest,
+    TestOrchestrationResponse
 } from '@browserstack/wdio-browserstack-service'
 
 import PerformanceTester from '../instrumentation/performance/performance-tester.js'
@@ -484,5 +486,36 @@ export class GrpcClient {
      */
     getChannel() {
         return this.channel
+    }
+
+    /**
+     * Test orchestration
+     * @param {TestOrchestrationRequest} request - The request object
+     * @returns {Promise<TestOrchestrationResponse>} The response
+     */
+    async testOrchestration(request: TestOrchestrationRequest) {
+        this.logger.debug(`testOrchestration: request=${JSON.stringify(request)}`)
+
+        try {
+            if (!this.client) {
+                this.logger.error('No gRPC client initialized.')
+                throw new Error('gRPC client is not initialized')
+            }
+
+            const testOrchestrationPromise = promisify(this.client.testOrchestration).bind(this.client) as (arg0: TestOrchestrationRequest) => Promise<TestOrchestrationResponse>
+            
+            try {
+                const response = await testOrchestrationPromise(request)
+                this.logger.debug(`testOrchestration: response=${JSON.stringify(response)}`)
+                return response
+            } catch (error: unknown) {
+                const errorMessage = util.format(error)
+                this.logger.error(`testOrchestration error: ${errorMessage}`)
+                throw error
+            }
+        } catch (error) {
+            this.logger.error(`Error in testOrchestration: ${util.format(error)}`)
+            throw error
+        }
     }
 }

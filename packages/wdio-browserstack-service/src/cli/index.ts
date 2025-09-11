@@ -10,7 +10,7 @@ import AutomateModule from './modules/automateModule.js'
 import TestHubModule from './modules/testHubModule.js'
 
 import type { ChildProcess } from 'node:child_process'
-import type { StartBinSessionResponse } from '@browserstack/wdio-browserstack-service'
+import type { StartBinSessionResponse, TestOrchestrationRequest, TestOrchestrationResponse } from '@browserstack/wdio-browserstack-service'
 import type BaseModule from './modules/baseModule.js'
 import { BROWSERSTACK_ACCESSIBILITY, BROWSERSTACK_OBSERVABILITY, BROWSERSTACK_TESTHUB_JWT, BROWSERSTACK_TESTHUB_UUID, CLI_STOP_TIMEOUT, TESTOPS_BUILD_COMPLETED_ENV, TESTOPS_SCREENSHOT_ENV } from '../constants.js'
 import type { Options } from '@wdio/types'
@@ -353,6 +353,33 @@ export class BrowserstackCLI {
         } catch (error) {
             PerformanceTester.end(PerformanceEvents.SDK_CONNECT_BIN_SESSION, false, util.format(error))
             this.logger.error(`Failed to start as child process: ${util.format(error)}`)
+        }
+    }
+
+    async test_orchestration_session(testFiles: string[], orchestrationStrategy: string) {
+        if (!this.binSessionId) {
+            this.logger.error('binSessionId is not initialized. Cannot perform test orchestration.');
+            return null;
+        }
+
+        const request: TestOrchestrationRequest = {
+            binSessionId: this.binSessionId,
+            testFiles,
+            orchestrationStrategy
+        };
+
+        try {
+            // Call the gRPC client method
+            const response = await GrpcClient.getInstance().testOrchestration(request);
+            this.logger.debug(`test-orchestration-session=${JSON.stringify(response)}`);
+
+            if (response.success && Array.isArray(response.orderedTestFiles)) {
+                return response.orderedTestFiles;
+            }
+            return null;
+        } catch (error) {
+            this.logger.error(`Error in test_orchestration_session: ${error}`);
+            return null;
         }
     }
 

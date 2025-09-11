@@ -1,0 +1,22 @@
+{
+  "name": "wdio-test-orchestration-example",
+  "version": "1.0.0",
+  "description": "Example of using WebdriverIO Test Orchestration",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "wdio run wdio.conf.js",
+    "setup-local": "node setup-local-packages.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@wdio/local-runner": "file:../../packages/wdio-local-runner",
+    "@wdio/mocha-framework": "file:../../packages/wdio-mocha-framework",
+    "@wdio/spec-reporter": "file:../../packages/wdio-spec-reporter",
+    "@wdio/cli": "file:../../packages/wdio-cli",
+    "@wdio/browserstack-service": "file:../../packages/wdio-browserstack-service",
+    "webdriverio": "file:../../packages/webdriverio"
+  }
+}
