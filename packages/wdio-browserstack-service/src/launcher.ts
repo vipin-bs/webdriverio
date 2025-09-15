@@ -63,6 +63,7 @@ import { CLIUtils } from './cli/cliUtils.js'
 import accessibilityScripts from './scripts/accessibility-scripts.js'
 import util from 'node:util'
 import APIUtils from './cli/apiUtils.js'
+import OrchestrationUtils from './testorchestration/testorcherstrationutils.js'
 
 type BrowserstackLocal = BrowserstackLocalLauncher.Local & {
     pid?: number
@@ -217,6 +218,54 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
     async onPrepare (config: Options.Testrunner, capabilities: Capabilities.RemoteCapabilities) {
         // // Send Funnel start request
         await sendStart(this.browserStackConfig)
+
+
+        // Convert glob patterns in specs to resolved file URLs
+        if (config.specs && Array.isArray(config.specs)) {
+            try {
+                // Import glob for expanding file patterns
+                const glob = (await import('glob')).sync
+                const url = await import('node:url')
+                const path = await import('node:path')
+                
+                // Use ConfigParser.getFilePaths equivalent logic to expand specs
+                const expandedSpecs: string[] = []
+                for (const specPattern of config.specs) {
+                    if (typeof specPattern === 'string') {
+                        if (specPattern.startsWith('file://')) {
+                            expandedSpecs.push(specPattern)
+                            continue
+                        }
+                        
+                        // Expand glob pattern to absolute paths with file:// protocol
+                        const pattern = specPattern.replace(/\\/g, '/')
+                        const rootDir = config.rootDir || process.cwd()
+                        const filenames = glob(pattern, {
+                            cwd: rootDir,
+                            matchBase: true
+                        }) || []
+                        
+                        // Filter for JavaScript/TypeScript files and convert to file:// URLs
+                        const validExtensions = ['.js', '.ts', '.cjs', '.mjs']
+                        filenames
+                            .filter((filename: string) => validExtensions.some(ext => filename.endsWith(ext)))
+                            .forEach((filename: string) => {
+                                const absPath = path.isAbsolute(filename) 
+                                    ? path.normalize(filename)
+                                    : path.resolve(rootDir, filename)
+                                expandedSpecs.push(url.pathToFileURL(absPath).href)
+                            })
+                    }
+                }
+                
+                if (expandedSpecs.length > 0) {
+                    BStackLogger.info(`Expanded specs from glob patterns to ${expandedSpecs.length} files`)
+                    config.specs = expandedSpecs
+                }
+            } catch (error) {
+                BStackLogger.error(`Failed to expand spec patterns: ${error}`)
+            }
+        }
 
         try {
             if (CLIUtils.checkCLISupportedFrameworks(config.framework)) {
@@ -449,14 +498,20 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
 
     async onComplete () {
         PerformanceTester.start(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CLEANUP)
-
+        
         try {
             BStackLogger.debug('Inside OnComplete hook..')
 
             BStackLogger.debug('Sending stop launch event')
 
             try {
-                await (BrowserstackCLI.getInstance().isRunning() ? BrowserstackCLI.getInstance().stop() : stopBuildUpstream())
+                if (BrowserstackCLI.getInstance().isRunning()){
+                    await BrowserstackCLI.getInstance().stop()
+                } 
+                else{
+                    await OrchestrationUtils.getInstance(this._config)?.collectBuildData(this._config)
+                    await stopBuildUpstream()
+                }
             } catch (err) {
                 BStackLogger.error(`Error while stoping CLI ${err}`)
             }

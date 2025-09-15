@@ -29,7 +29,6 @@ export class BrowserstackOrchestrationService {
      */
     async beforeSession(_: any, __: any, ___: any, specs: string[]): Promise<void> {
         try {
-            log.info('Applying test orchestration before session starts orchestration-service.ts')
             const orderedSpecs = await applyOrchestrationIfEnabled(specs, this._options)
             
             // Update the specs in the config

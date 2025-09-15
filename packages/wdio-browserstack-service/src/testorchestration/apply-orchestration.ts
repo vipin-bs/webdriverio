@@ -23,7 +23,14 @@ export async function applyOrchestrationIfEnabled(
         log.warn('Orchestration handler is not initialized. Skipping orchestration.')
         return specs
     }
-    
+
+    // Check if runSmartSelection is enabled in config
+    const runSmartSelectionEnabled = Boolean(config?.testOrchestrationOptions?.runSmartSelection?.enabled)
+    if (!runSmartSelectionEnabled) {
+        log.info('runSmartSelection is not enabled in config. Skipping orchestration.')
+        return specs
+    }
+
     // Check if orchestration is enabled
     let testOrderingApplied = false
     orchestrationHandler.addToOrderingInstrumentationData('enabled', orchestrationHandler.testOrderingEnabled())

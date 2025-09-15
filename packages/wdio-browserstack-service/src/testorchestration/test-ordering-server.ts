@@ -31,7 +31,8 @@ export class TestOrderingServer {
     constructor(config: Record<string, any>, logger: Logger) {
         this.config = config
         this.logger = logger
-        this.ORDERING_ENDPOINT = 'testorchestration/api/v1/split-tests'
+        const buildUuid = process.env.BROWSERSTACK_TESTHUB_UUID
+        this.ORDERING_ENDPOINT = `testorchestration/api/v1/builds/${buildUuid}/split-tests`
         this.requestData = null
         this.defaultTimeout = 60
         this.defaultTimeoutInterval = 5
@@ -54,8 +55,8 @@ export class TestOrderingServer {
                 tests: testFiles.map(f => ({ filePath: f })),
                 orchestrationStrategy,
                 orchestrationMetadata,
-                nodeIndex: parseInt(process.env.BROWSERSTACK_NODE_INDEX || '0', 10),
-                totalNodes: parseInt(process.env.BROWSERSTACK_TOTAL_NODE_COUNT || '1', 10),
+                nodeIndex: parseInt(process.env.BROWSERSTACK_NODE_INDEX || '0'),
+                totalNodes: parseInt(process.env.BROWSERSTACK_TOTAL_NODE_COUNT || '0'),
                 projectName: this.config.projectName || '',
                 buildName: this.config.buildName || path.basename(process.cwd()),
                 buildRunIdentifier: this.config.buildIdentifier || '',

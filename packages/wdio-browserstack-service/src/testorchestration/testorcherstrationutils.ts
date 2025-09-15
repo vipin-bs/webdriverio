@@ -240,9 +240,9 @@ export class OrchestrationUtils {
      */
     async collectBuildData(config: Record<string, any>): Promise<Record<string, any> | null> {
         // Return early if smart selection is not enabled or applicable
-        if (!(TEST_ORDERING_SUPPORTED_FRAMEWORKS.includes(config.framework) && this.getRunSmartSelection())) {
-            return null
-        }
+        // if (!(TEST_ORDERING_SUPPORTED_FRAMEWORKS.includes(config.framework) && this.getRunSmartSelection())) {
+        //     return null
+        // }
         
         const buildUuid = process.env.BROWSERSTACK_TESTHUB_UUID
         this.logger.debug(`[collectBuildData] Collecting build data for build UUID: ${buildUuid}`)
