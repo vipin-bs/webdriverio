@@ -1,7 +1,7 @@
 import got from 'got'
 import type { OptionsOfJSONResponseBody } from 'got'
 import type { Services, Capabilities, Options, Frameworks } from '@wdio/types'
-
+import logger from '@wdio/logger'
 import {
     getBrowserDescription,
     getBrowserCapabilities,
@@ -51,6 +51,7 @@ export default class BrowserstackService implements Services.ServiceInstance {
     private _percyCaptureMode: string | undefined = undefined
     private _percyHandler?: PercyHandler
     private _turboScale
+    private _logger = logger('wdio-browserstack-service')
 
     constructor (
         options: BrowserstackConfig & Options.Testrunner,

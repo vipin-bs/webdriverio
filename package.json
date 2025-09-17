@@ -93,6 +93,7 @@
     "@typescript-eslint/utils": "^8.1.0",
     "@vitejs/plugin-react": "^4.2.1",
     "@vitejs/plugin-vue": "^5.0.4",
+    "@browserstack/wdio-browserstack-service": "^2.0.1",
     "@vitest/coverage-v8": "^1.2.2",
     "camelcase": "^8.0.0",
     "cddl": "^0.8.5",

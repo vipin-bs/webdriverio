@@ -56,6 +56,7 @@ import TestOpsConfig from './testOps/testOpsConfig.js'
 import PerformanceTester from './instrumentation/performance/performance-tester.js'
 import * as PERFORMANCE_SDK_EVENTS from './instrumentation/performance/constants.js'
 import accessibilityScripts from './scripts/accessibility-scripts.js'
+import OrchestrationUtils from './testorchestration/testorcherstrationutils.js'
 
 type BrowserstackLocal = BrowserstackLocalLauncher.Local & {
     pid?: number
@@ -207,6 +208,53 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
         // // Send Funnel start request
         await sendStart(this.browserStackConfig)
 
+        // Convert glob patterns in specs to resolved file URLs
+        if (config.specs && Array.isArray(config.specs)) {
+            try {
+                // Import glob for expanding file patterns
+                const glob = (await import('glob')).sync
+                const url = await import('node:url')
+                const path = await import('node:path')
+                
+                // Use ConfigParser.getFilePaths equivalent logic to expand specs
+                const expandedSpecs: string[] = []
+                for (const specPattern of config.specs) {
+                    if (typeof specPattern === 'string') {
+                        if (specPattern.startsWith('file://')) {
+                            expandedSpecs.push(specPattern)
+                            continue
+                        }
+                        
+                        // Expand glob pattern to absolute paths with file:// protocol
+                        const pattern = specPattern.replace(/\\/g, '/')
+                        const rootDir = config.rootDir || process.cwd()
+                        const filenames = glob(pattern, {
+                            cwd: rootDir,
+                            matchBase: true
+                        }) || []
+                        
+                        // Filter for JavaScript/TypeScript files and convert to file:// URLs
+                        const validExtensions = ['.js', '.ts', '.cjs', '.mjs']
+                        filenames
+                            .filter((filename: string) => validExtensions.some(ext => filename.endsWith(ext)))
+                            .forEach((filename: string) => {
+                                const absPath = path.isAbsolute(filename) 
+                                    ? path.normalize(filename)
+                                    : path.resolve(rootDir, filename)
+                                expandedSpecs.push(url.pathToFileURL(absPath).href)
+                            })
+                    }
+                }
+                
+                if (expandedSpecs.length > 0) {
+                    BStackLogger.info(`Expanded specs from glob patterns to ${expandedSpecs.length} files`)
+                    config.specs = expandedSpecs
+                }
+            } catch (error) {
+                BStackLogger.error(`Failed to expand spec patterns: ${error}`)
+            }
+        }
+
         // Setting up healing for those sessions where we don't add the service version capability as it indicates that the session is not being run on BrowserStack
         if (!shouldAddServiceVersion(this._config, this._options.testObservability, capabilities as Capabilities.BrowserStackCapabilities)) {
             try {
@@ -347,6 +395,29 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
         this._updateCaps(capabilities, 'testhubBuildUuid')
         this._updateCaps(capabilities, 'buildProductMap')
 
+
+        // Apply test orchestration if enabled
+        try {
+            // Import dynamically to avoid circular dependencies
+            const { applyOrchestrationIfEnabled } = await import('./testorchestration/apply-orchestration.js')
+            
+            if (config.specs && config.specs.length > 0 && this._options.testObservability) {
+                BStackLogger.info('Applying test orchestration');
+                // Ensure we're passing string[] to applyOrchestrationIfEnabled
+                const specs = (config.specs as string[]).filter(spec => typeof spec === 'string');
+                const orderedSpecs = await applyOrchestrationIfEnabled(specs, this._options)
+                
+                // Update the specs array with the ordered specs
+                if (orderedSpecs && orderedSpecs.length > 0) {
+                    // Clear the specs array and add the ordered specs
+                    config.specs = orderedSpecs;
+                    BStackLogger.info(`Test specs updated with orchestrated order`)
+                }
+            }
+        } catch (error) {
+            BStackLogger.error(`Error applying test orchestration: ${error}`)
+        }
+
         if (!this._options.browserstackLocal) {
             return BStackLogger.info('browserstackLocal is not enabled - skipping...')
         }
@@ -400,6 +471,10 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
     @PerformanceTester.Measure(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CLEANUP)
     async onComplete () {
         BStackLogger.debug('Inside OnComplete hook..')
+
+        BStackLogger.info('Collecting build data...')
+        const inst = OrchestrationUtils.getInstance(this._config)
+        let resp1 = await inst?.collectBuildData(this._config)
 
         BStackLogger.debug('Sending stop launch event')
         await stopBuildUpstream()
