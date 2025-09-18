@@ -78,10 +78,22 @@ export class OrchestrationUtils {
         this.testOrdering = new TestOrdering()
         this.smartSelectionSource = null // Store source paths if provided
         
-        // Check both possible configuration paths
-        const testOrchOptions = config.testOrchestrationOptions || {}
+        // Check both possible configuration paths: direct or nested in services
+        let testOrchOptions = config.testOrchestrationOptions || {}
         
-        // Try to get runSmartSelection from either path
+        // If not found at top level, check if it's in the browserstack service config
+        if (Object.keys(testOrchOptions).length === 0 && config.services && Array.isArray(config.services)) {
+            // Look for browserstack service configuration
+            for (const service of config.services) {
+                if (Array.isArray(service) && service[0] === 'browserstack' && service[1] && service[1].testOrchestrationOptions) {
+                    testOrchOptions = service[1].testOrchestrationOptions
+                    this.logger.debug(`[constructor] Found testOrchestrationOptions in browserstack service config`)
+                    break
+                }
+            }
+        }
+        
+        // Try to get runSmartSelection options
         const runSmartSelectionOpts = testOrchOptions[RUN_SMART_SELECTION] || {}
         
         this._setRunSmartSelection(
@@ -329,8 +341,8 @@ export class OrchestrationUtils {
         try {
             const endpoint = `testorchestration/api/v1/builds/${buildUuid}/collect-build-data`
             
-            const multiRepoSource = this.getSmartSelectionSource() || [] // for multi-repo
-            const prDetails = getGitMetadataForAiSelection(multiRepoSource) // mono-repo is handled inside
+            const multiRepoSource = this.getSmartSelectionSource() || [] 
+            const prDetails = getGitMetadataForAiSelection(multiRepoSource) 
             
             // Extract testObservabilityOptions from the complex config structure
             let testObservabilityOptions: Record<string, any> = {}
