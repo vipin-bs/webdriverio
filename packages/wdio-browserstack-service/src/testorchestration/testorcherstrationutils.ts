@@ -341,11 +341,9 @@ export class OrchestrationUtils {
         try {
             const endpoint = `testorchestration/api/v1/builds/${buildUuid}/collect-build-data`
             
-            const multiRepoSource = this.getSmartSelectionSource() || [] 
-            const prDetails = getGitMetadataForAiSelection(multiRepoSource) 
-            
             // Extract testObservabilityOptions from the complex config structure
             let testObservabilityOptions: Record<string, any> = {}
+            let testOrchestrationOptions: Record<string, any> = {}
             
             try {
                 // Check if config has services array
@@ -355,6 +353,7 @@ export class OrchestrationUtils {
                         if (Array.isArray(service) && service[0] === 'browserstack' && service[1]) {
                             // Extract testObservabilityOptions from the browserstack service config
                             testObservabilityOptions = service[1].testObservabilityOptions || {}
+                            testOrchestrationOptions = service[1].testOrchestrationOptions || {}
                             break
                         }
                     }
@@ -365,6 +364,9 @@ export class OrchestrationUtils {
                 this.logger.error(`[collectBuildData] Error extracting testObservabilityOptions: ${e}`)
             }
             
+            const multiRepoSource = testOrchestrationOptions['runSmartSelection']?.source || []
+            const prDetails = getGitMetadataForAiSelection(multiRepoSource)
+
             const payload = {
                 projectName: testObservabilityOptions.projectName || '',
                 buildName: testObservabilityOptions.buildName || path.basename(process.cwd()),

@@ -40,8 +40,8 @@ export async function applyOrchestrationIfEnabled(
     // if (orchestrationHandler.testOrderingEnabled()) {
     log.info('Test orchestration is enabled. Attempting to reorder test files.')
     
-    // Get the test files from the specs
-    const testFiles = specs.map(spec => path.normalize(spec).replace(/\\/g, '/'))
+    // Get the test files from the specs - pass them as received
+    const testFiles = specs
     testOrderingApplied = true
     log.info(`Test files to be reordered: ${testFiles.join(', ')}`) 
     

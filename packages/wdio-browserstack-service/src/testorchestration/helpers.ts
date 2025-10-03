@@ -207,7 +207,7 @@ function isValidGitResult(result: Record<string, any>): boolean {
  */
 function getBaseBranch(): string | null {
     try {
-        // Try to get the default branch from origin/HEAD symbolic ref
+        // Try to get the default branch from origin/HEAD symbolic ref (works for most providers)
         try {
             const originHeadOutput = execSync('git symbolic-ref refs/remotes/origin/HEAD').toString().trim()
             if (originHeadOutput.startsWith('refs/remotes/origin/')) {
@@ -220,23 +220,24 @@ function getBaseBranch(): string | null {
         // Fallback: use the first branch in local heads
         try {
             const branchesOutput = execSync('git branch').toString().trim()
-            const branches = branchesOutput.split('\n')
+            const branches = branchesOutput.split('\n').filter(Boolean)
             if (branches.length > 0) {
-                // Remove the '* ' from current branch if present
-                return branches[0].replace(/^\*\s+/, '')
+                // Remove the '* ' from current branch if present and return first branch
+                const firstBranch = branches[0].replace(/^\*\s+/, '').trim()
+                return firstBranch
             }
         } catch (e) {
             // Branches might not exist
         }
         
-        // Fallback: use the first remote branch
+        // Fallback: use the first remote branch if available
         try {
             const remoteBranchesOutput = execSync('git branch -r').toString().trim()
-            const remoteBranches = remoteBranchesOutput.split('\n')
-            if (remoteBranches.length > 0) {
-                const firstRemoteBranch = remoteBranches[0].trim()
-                if (firstRemoteBranch.startsWith('origin/')) {
-                    return firstRemoteBranch
+            const remoteBranches = remoteBranchesOutput.split('\n').filter(Boolean)
+            for (const branch of remoteBranches) {
+                const cleanBranch = branch.trim()
+                if (cleanBranch.startsWith('origin/') && !cleanBranch.includes('HEAD')) {
+                    return cleanBranch
                 }
             }
         } catch (e) {
@@ -358,6 +359,7 @@ export function getGitMetadataForAiSelection(folders: string[] = []): any[] {
     const results: any[] = []
     
     for (const folder of folders) {
+        const originalDir = process.cwd()
         try {
             // Initialize the result structure
             const result: Record<string, any> = {
@@ -372,7 +374,6 @@ export function getGitMetadataForAiSelection(folders: string[] = []): any[] {
             }
             
             // Change directory to the folder
-            const originalDir = process.cwd()
             process.chdir(folder)
             
             // Get current branch and latest commit
@@ -420,17 +421,37 @@ export function getGitMetadataForAiSelection(folders: string[] = []): any[] {
             const authorsSet = new Set<string>()
             const commitMessages: any[] = []
             
-            for (const commit of commits) {
-                const commitMessage = execSync(`git log -1 --pretty=%B ${commit}`).toString().trim()
-                log.debug(`Processing commit: ${commitMessage}`)
-                
-                const authorName = execSync(`git log -1 --pretty=%an ${commit}`).toString().trim()
-                authorsSet.add(authorName || 'Unknown')
-                
-                commitMessages.push({
-                    message: commitMessage.trim(),
-                    user: authorName || 'Unknown'
-                })
+            // Only process commits if we have them
+            if (commits.length > 0) {
+                for (const commit of commits) {
+                    try {
+                        const commitMessage = execSync(`git log -1 --pretty=%B ${commit}`).toString().trim()
+                        log.debug(`Processing commit: ${commitMessage}`)
+                        
+                        const authorName = execSync(`git log -1 --pretty=%an ${commit}`).toString().trim()
+                        authorsSet.add(authorName || 'Unknown')
+                        
+                        commitMessages.push({
+                            message: commitMessage.trim(),
+                            user: authorName || 'Unknown'
+                        })
+                    } catch (e) {
+                        log.debug(`Error processing commit ${commit}: ${e}`)
+                    }
+                }
+            }
+            
+            // If we have no commits but have changed files, add a fallback author
+            if (commits.length === 0 && result.filesChanged.length > 0) {
+                try {
+                    // Try to get current git user as fallback
+                    const fallbackAuthor = execSync('git config user.name').toString().trim() || 'Unknown'
+                    authorsSet.add(fallbackAuthor)
+                    log.debug(`Added fallback author: ${fallbackAuthor}`)
+                } catch (e) {
+                    authorsSet.add('Unknown')
+                    log.debug('Added Unknown as fallback author')
+                }
             }
             
             result.authors = Array.from(authorsSet)
@@ -443,13 +464,17 @@ export function getGitMetadataForAiSelection(folders: string[] = []): any[] {
             }
             
             // Set PR title and description from latest commit if not already set
-            if ((!result.prTitle || result.prTitle.trim() === '') && commits.length > 0) {
-                const latestCommitMessage = commitMessages[0]?.message || ''
-                const messageLines = latestCommitMessage.trim().split('\n')
-                result.prTitle = messageLines[0] || ''
-                
-                if (messageLines.length > 2) {
-                    result.prDescription = messageLines.slice(2).join('\n').trim()
+            if ((!result.prTitle || result.prTitle.trim() === '') && latestCommit) {
+                try {
+                    const latestCommitMessage = execSync(`git log -1 --pretty=%B ${latestCommit}`).toString().trim()
+                    const messageLines = latestCommitMessage.trim().split('\n')
+                    result.prTitle = messageLines[0] || ''
+                    
+                    if (messageLines.length > 2) {
+                        result.prDescription = messageLines.slice(2).join('\n').trim()
+                    }
+                } catch (e) {
+                    log.debug(`Error extracting commit message for PR title: ${e}`)
                 }
             }
             
@@ -462,9 +487,7 @@ export function getGitMetadataForAiSelection(folders: string[] = []): any[] {
             
             // Reset directory if needed
             try {
-                if (process.cwd() !== folders[0]) {
-                    process.chdir(folders[0])
-                }
+                process.chdir(originalDir)
             } catch (dirError) {
                 log.error(`Error resetting directory: ${dirError}`)
             }
@@ -491,4 +514,5 @@ export function getGitMetadataForAiSelection(folders: string[] = []): any[] {
         prRawDiff: result.prRawDiff || ''
     }))
     return formattedResults
+
 }

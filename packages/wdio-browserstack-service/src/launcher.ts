@@ -405,8 +405,9 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
                 BStackLogger.info('Applying test orchestration');
                 // Ensure we're passing string[] to applyOrchestrationIfEnabled
                 const specs = (config.specs as string[]).filter(spec => typeof spec === 'string');
+                console.log('Specs before orchestration:', specs)
                 const orderedSpecs = await applyOrchestrationIfEnabled(specs, this._options)
-                
+                console.log('Specs after orchestration:', orderedSpecs)
                 // Update the specs array with the ordered specs
                 if (orderedSpecs && orderedSpecs.length > 0) {
                     // Clear the specs array and add the ordered specs

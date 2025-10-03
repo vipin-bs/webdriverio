@@ -113,7 +113,7 @@ export class TestOrderingServer {
         ) {
             this.logger.debug('[process_split_tests_response] Received null value(s) for some attributes in split tests API response')
         }
-        console.log('responsedata from testordering', responseData)
+        // console.log('responsedata from testordering', responseData)
         return responseData
     }
 
