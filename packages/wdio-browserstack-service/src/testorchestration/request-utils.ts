@@ -1,8 +1,5 @@
 import got from 'got'
-import type { Logger } from '@wdio/logger'
-import logger from '@wdio/logger'
-
-const log = logger('wdio-browserstack-service:RequestUtils')
+import { BStackLogger } from '../bstackLogger.js'
 
 // Constants
 const ORCHESTRATION_API_URL = "https://collector-observability.browserstack.com"
@@ -15,7 +12,7 @@ export class RequestUtils {
      * Makes a request to the collect build data endpoint
      */
     static async postCollectBuildData(reqEndpoint: string, data: any) {
-        log.debug('Processing Request for postCollectBuildData')
+        BStackLogger.debug('Processing Request for postCollectBuildData')
         return RequestUtils.makeOrchestrationRequest('POST', reqEndpoint, { data })
     }
 
@@ -23,7 +20,7 @@ export class RequestUtils {
      * Makes a request to the test orchestration split tests endpoint
      */
     static async testOrchestrationSplitTests(reqEndpoint: string, data: any) {
-        log.debug('Processing Request for testOrchestrationSplitTests')
+        BStackLogger.debug('Processing Request for testOrchestrationSplitTests')
         return RequestUtils.makeOrchestrationRequest('POST', reqEndpoint, { data })
     }
 
@@ -31,7 +28,7 @@ export class RequestUtils {
      * Gets ordered tests from the test orchestration
      */
     static async getTestOrchestrationOrderedTests(reqEndpoint: string, data: any) {
-        log.debug('Processing Request for getTestOrchestrationOrderedTests')
+        BStackLogger.debug('Processing Request for getTestOrchestrationOrderedTests')
         return RequestUtils.makeOrchestrationRequest('GET', reqEndpoint, {})
     }
 
@@ -81,13 +78,13 @@ export class RequestUtils {
                 throw new Error(`Unsupported HTTP method: ${method}`)
             }
 
-            log.debug(`Orchestration request made to URL: ${url} with method: ${method}`)
+            BStackLogger.debug(`Orchestration request made to URL: ${url} with method: ${method}`)
 
             let responseObj: any = {}
             try {
                 responseObj = response.body
             } catch (e) {
-                log.debug(`Failed to parse JSON response: ${e} - ${response.body}`)
+                BStackLogger.debug(`Failed to parse JSON response: ${e} - ${response.body}`)
             }
 
             if (responseObj) {
@@ -98,7 +95,7 @@ export class RequestUtils {
 
             return responseObj
         } catch (e) {
-            log.error(`Orchestration request failed: ${e} - ${url}`)
+            BStackLogger.error(`Orchestration request failed: ${e} - ${url}`)
             return null
         }
     }

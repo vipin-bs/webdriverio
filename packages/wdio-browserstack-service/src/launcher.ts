@@ -208,12 +208,11 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
         // // Send Funnel start request
         await sendStart(this.browserStackConfig)
 
-        // Convert glob patterns in specs to resolved file URLs
+        // Convert glob patterns in specs to resolved relative paths
         if (config.specs && Array.isArray(config.specs)) {
             try {
                 // Import glob for expanding file patterns
                 const glob = (await import('glob')).sync
-                const url = await import('node:url')
                 const path = await import('node:path')
                 
                 // Use ConfigParser.getFilePaths equivalent logic to expand specs
@@ -225,7 +224,7 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
                             continue
                         }
                         
-                        // Expand glob pattern to absolute paths with file:// protocol
+                        // Expand glob pattern to relative paths
                         const pattern = specPattern.replace(/\\/g, '/')
                         const rootDir = config.rootDir || process.cwd()
                         const filenames = glob(pattern, {
@@ -233,15 +232,19 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
                             matchBase: true
                         }) || []
                         
-                        // Filter for JavaScript/TypeScript files and convert to file:// URLs
+                        // Filter for JavaScript/TypeScript files and ensure relative paths
                         const validExtensions = ['.js', '.ts', '.cjs', '.mjs']
                         filenames
                             .filter((filename: string) => validExtensions.some(ext => filename.endsWith(ext)))
                             .forEach((filename: string) => {
-                                const absPath = path.isAbsolute(filename) 
-                                    ? path.normalize(filename)
-                                    : path.resolve(rootDir, filename)
-                                expandedSpecs.push(url.pathToFileURL(absPath).href)
+                                // Ensure the filename is always relative to rootDir
+                                let relativePath = filename
+                                if (path.isAbsolute(filename)) {
+                                    relativePath = path.relative(rootDir, filename)
+                                }
+                                // Normalize path separators for consistency
+                                relativePath = relativePath.replace(/\\/g, '/')
+                                expandedSpecs.push(relativePath)
                             })
                     }
                 }
