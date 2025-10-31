@@ -314,7 +314,7 @@ export class OrchestrationUtils {
     /**
      * Get build start data
      */
-    getBuildStartData(config: Record<string, any>): Record<string, any> {
+    getBuildStartData(): Record<string, any> {
         const testOrchestrationData: Record<string, any> = {}
 
         testOrchestrationData['run_smart_selection'] = {
