@@ -43,7 +43,8 @@ import {
     validateCapsWithNonBstackA11y,
     mergeChromeOptions,
     normalizeTestReportingConfig,
-    normalizeTestReportingEnvVariables
+    normalizeTestReportingEnvVariables,
+    getGitMetaData
 } from './util.js'
 import { getProductMap } from './testHub/utils.js'
 import CrashReporter from './crash-reporter.js'
@@ -63,6 +64,8 @@ import { CLIUtils } from './cli/cliUtils.js'
 import accessibilityScripts from './scripts/accessibility-scripts.js'
 import util from 'node:util'
 import APIUtils from './cli/apiUtils.js'
+import { OrchestrationUtils } from './testorchestration/testorcherstrationutils.js'
+// import OrchestrationUtils from './testorchestration/testorcherstrationutils.js'
 
 type BrowserstackLocal = BrowserstackLocalLauncher.Local & {
     pid?: number
@@ -218,6 +221,58 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
         // // Send Funnel start request
         await sendStart(this.browserStackConfig)
 
+        // Convert glob patterns in specs to resolved relative paths
+        if (config.specs && Array.isArray(config.specs)) {
+            try {
+                // Import glob for expanding file patterns
+                const glob = (await import('glob')).sync
+                const path = await import('node:path')
+
+                // Get git root to calculate relative paths from project root
+                const gitConfig = await getGitMetaData()
+                const projectRoot = gitConfig?.root || process.cwd()
+
+                // Use ConfigParser.getFilePaths equivalent logic to expand specs
+                const expandedSpecs: string[] = []
+                const cwd = process.cwd()
+
+                for (const specPattern of config.specs) {
+                    if (typeof specPattern === 'string') {
+                        if (specPattern.startsWith('file://')) {
+                            expandedSpecs.push(specPattern)
+                            continue
+                        }
+
+                        // Expand glob pattern relative to CWD (where command was run)
+                        const pattern = specPattern.replace(/\\/g, '/')
+                        const filenames = glob(pattern, {
+                            cwd: cwd,
+                            absolute: true
+                        }) || []
+
+                        // Convert absolute paths to relative paths from project root for passing to orchestration
+                        filenames
+                            .forEach((filename: string) => {
+                                // Calculate relative path from project root
+                                const relativePath = path.relative(projectRoot, filename)
+                                if (relativePath) {
+                                    // Normalize path separators for consistency
+                                    const normalizedPath = relativePath.replace(/\\/g, '/')
+                                    expandedSpecs.push(normalizedPath)
+                                }
+                            })
+                    }
+                }
+
+                if (expandedSpecs.length > 0) {
+                    BStackLogger.info(`Expanded specs from glob patterns to ${expandedSpecs.length} files`)
+                    config.specs = expandedSpecs
+                }
+            } catch (error) {
+                BStackLogger.error(`Failed to expand spec patterns: ${error}`)
+            }
+        }
+
         try {
             if (CLIUtils.checkCLISupportedFrameworks(config.framework)) {
                 CLIUtils.setFrameworkDetail(WDIO_NAMING_PREFIX + config.framework, 'WebdriverIO') // TODO: make this constant
@@ -371,6 +426,59 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
         this._updateCaps(capabilities, 'testhubBuildUuid')
         this._updateCaps(capabilities, 'buildProductMap')
 
+        // Apply test orchestration if enabled
+        try {
+            // Import dynamically to avoid circular dependencies
+            const { applyOrchestrationIfEnabled } = await import('./testorchestration/apply-orchestration.js')
+
+            if (config.specs && config.specs.length > 0 && this._options.testObservability) {
+                BStackLogger.info('Applying test orchestration')
+                // Ensure we're passing string[] to applyOrchestrationIfEnabled
+                const specs = (config.specs as string[]).filter(spec => typeof spec === 'string')
+                console.log('Specs before orchestration:', specs)
+
+                const orderedSpecs = await applyOrchestrationIfEnabled(specs, this._options)
+                console.log('Specs after orchestration:', orderedSpecs)
+                // Update the specs array with the ordered specs
+                if (orderedSpecs && orderedSpecs.length > 0) {
+                    // Clear the specs array and add the ordered specs
+                    config.specs = orderedSpecs
+                    BStackLogger.info('Test specs updated with orchestrated order')
+                }
+            }
+        } catch (error) {
+            BStackLogger.error(`Error applying test orchestration: ${error}`)
+        }
+
+        // Convert specs back from project-root-relative to CWD-relative paths
+        // This ensures ConfigParser can find the files correctly
+        if (config.specs && Array.isArray(config.specs)) {
+            try {
+                const path = await import('node:path')
+                const gitConfig = await getGitMetaData()
+                const projectRoot = gitConfig?.root || process.cwd()
+                const cwd = process.cwd()
+
+                // Convert specs from project-root-relative back to CWD-relative
+                const cwdRelativeSpecs: (string | string[])[] = []
+                for (const spec of config.specs) {
+                    if (typeof spec === 'string' && !spec.startsWith('file://')) {
+                        // Convert from project-root-relative to absolute, then to CWD-relative
+                        const absolutePath = path.resolve(projectRoot, spec)
+                        const cwdRelativePath = path.relative(cwd, absolutePath)
+                        cwdRelativeSpecs.push(cwdRelativePath)
+                    } else {
+                        cwdRelativeSpecs.push(spec)
+                    }
+                }
+
+                config.specs = cwdRelativeSpecs
+                console.log('Specs converted to CWD-relative:', cwdRelativeSpecs)
+            } catch (error) {
+                BStackLogger.error(`Failed to convert specs to CWD-relative paths: ${error}`)
+            }
+        }
+
         // local binary will be handled by CLI
         if (BrowserstackCLI.getInstance().isRunning()) {
             return
@@ -430,6 +538,17 @@ export default class BrowserstackLauncherService implements Services.ServiceInst
 
         try {
             BStackLogger.debug('Inside OnComplete hook..')
+
+            // Collect build data if orchestration is enabled
+            try {
+                const inst = OrchestrationUtils.getInstance(this._config)
+                if (inst) {
+                    BStackLogger.info('Collecting build data...')
+                    await inst.collectBuildData(this._config)
+                }
+            } catch (error) {
+                BStackLogger.debug(`Error collecting build data: ${error}`)
+            }
 
             BStackLogger.debug('Sending stop launch event')
 
