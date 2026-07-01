@@ -47,7 +47,8 @@ export const BSTACK_SERVICE_VERSION = bstackServiceVersion
 export const UPDATED_CLI_ENDPOINT =  'sdk/v1/update_cli'
 export const CLI_STOP_TIMEOUT = 3000
 
-export const NOT_ALLOWED_KEYS_IN_CAPS = ['includeTagsInTestingScope', 'excludeTagsInTestingScope']
+export const NOT_ALLOWED_KEYS_IN_CAPS = ['includeTagsInTestingScope', 'excludeTagsInTestingScope', 'testManagementOptions']
+export const BROWSERSTACK_TEST_PLAN_ID = 'BROWSERSTACK_TEST_PLAN_ID'
 
 export const LOGS_FILE = 'logs/bstack-wdio-service.log'
 export const CLI_DEBUG_LOGS_FILE = 'log/sdk-cli-debug.log'
@@ -159,3 +160,47 @@ export const GIT_META_DATA_TRUNCATED = '...[TRUNCATED]'
 export const WDIO_NAMING_PREFIX = 'WebdriverIO-'
 
 export const PERF_METRICS_WAIT_TIME = 2000
+
+/**
+ * Module Hook Events - Performance event names for module lifecycle tracking
+ * Used by module-hook-tracker.ts to instrument module initialization and cleanup
+ */
+export const MODULE_HOOK_EVENTS = {
+    // Instrumentation module
+    INSTRUMENTATION_ON_START: 'MODULE_INSTRUMENTATION_ON_START',
+    INSTRUMENTATION_ON_STOP: 'MODULE_INSTRUMENTATION_ON_STOP',
+
+    // TestHub module
+    TESTHUB_ON_START: 'MODULE_TESTHUB_ON_START',
+    TESTHUB_ON_STOP: 'MODULE_TESTHUB_ON_STOP',
+
+    // Observability module
+    OBSERVABILITY_ON_START: 'MODULE_OBSERVABILITY_ON_START',
+    OBSERVABILITY_ON_STOP: 'MODULE_OBSERVABILITY_ON_STOP',
+
+    // Percy module
+    PERCY_ON_START: 'MODULE_PERCY_ON_START',
+    PERCY_ON_STOP: 'MODULE_PERCY_ON_STOP',
+
+    // Accessibility module
+    ACCESSIBILITY_ON_START: 'MODULE_ACCESSIBILITY_ON_START',
+    ACCESSIBILITY_ON_STOP: 'MODULE_ACCESSIBILITY_ON_STOP',
+    ACCESSIBILITY_ON_DRIVER_INIT: 'MODULE_ACCESSIBILITY_ON_DRIVER_INIT',
+
+    // AI module
+    AI_ON_START: 'MODULE_AI_ON_START',
+    AI_ON_STOP: 'MODULE_AI_ON_STOP',
+    AI_BEFORE_SESSION: 'MODULE_AI_BEFORE_SESSION',
+    AI_ON_DRIVER_INIT: 'MODULE_AI_ON_DRIVER_INIT',
+
+    // Local testing module
+    LOCAL_ON_START: 'MODULE_LOCAL_ON_START',
+    LOCAL_ON_STOP: 'MODULE_LOCAL_ON_STOP',
+    LOCAL_INIT_SESSION: 'MODULE_LOCAL_INIT_SESSION',
+    LOCAL_ON_DRIVER_INIT: 'MODULE_LOCAL_ON_DRIVER_INIT',
+
+    // App Automate module
+    APPAUTOMATE_ON_START: 'MODULE_APPAUTOMATE_ON_START',
+    APPAUTOMATE_ON_DRIVER_INIT: 'MODULE_APPAUTOMATE_ON_DRIVER_INIT',
+} as const
+

@@ -12,15 +12,17 @@ import { getDataFromWorkers, removeWorkersDataDir } from '../data-store.js'
 import { getProductMap } from '../testHub/utils.js'
 import type { BrowserstackHealing } from '@browserstack/ai-sdk-node'
 import APIUtils from '../cli/apiUtils.js'
+import PerformanceTester from './performance/performance-tester.js'
+import { EVENTS } from './performance/constants.js'
 
-async function fireFunnelTestEvent(eventType: string, config: BrowserStackConfig) {
+async function fireFunnelTestEvent(eventType: string, config: BrowserStackConfig, isCLIEnabled = false) {
     if (!config.userName || !config.accessKey) {
         BStackLogger.debug('username/accesskey not passed')
         return
     }
 
     try {
-        const data = buildEventData(eventType, config)
+        const data = buildEventData(eventType, config, isCLIEnabled)
         await fireFunnelRequest(data)
         BStackLogger.debug('Funnel event success')
         if (eventType === 'SDKTestSuccessful') {
@@ -34,15 +36,32 @@ async function fireFunnelTestEvent(eventType: string, config: BrowserStackConfig
 export async function sendStart(config: BrowserStackConfig) {
     // Remove Workers folder if exists
     removeWorkersDataDir()
-    await fireFunnelTestEvent('SDKTestAttempted', config)
+
+    // Track funnel test attempted event
+    PerformanceTester.start(EVENTS.SDK_FUNNEL_TEST_ATTEMPTED)
+    try {
+        await fireFunnelTestEvent('SDKTestAttempted', config)
+        PerformanceTester.end(EVENTS.SDK_FUNNEL_TEST_ATTEMPTED, true)
+    } catch (error) {
+        PerformanceTester.end(EVENTS.SDK_FUNNEL_TEST_ATTEMPTED, false, error)
+        throw error
+    }
 }
 
-export async function sendFinish(config: BrowserStackConfig) {
-    await fireFunnelTestEvent('SDKTestSuccessful', config)
+export async function sendFinish(config: BrowserStackConfig, isCLIEnabled = false) {
+    // Track funnel test successful event
+    PerformanceTester.start(EVENTS.SDK_FUNNEL_TEST_SUCCESSFUL)
+    try {
+        await fireFunnelTestEvent('SDKTestSuccessful', config, isCLIEnabled)
+        PerformanceTester.end(EVENTS.SDK_FUNNEL_TEST_SUCCESSFUL, true)
+    } catch (error) {
+        PerformanceTester.end(EVENTS.SDK_FUNNEL_TEST_SUCCESSFUL, false, error)
+        throw error
+    }
 }
 
-export function saveFunnelData(eventType: string, config: BrowserStackConfig): string {
-    const data = buildEventData(eventType, config)
+export function saveFunnelData(eventType: string, config: BrowserStackConfig, isCLIEnabled = false): string {
+    const data = buildEventData(eventType, config, isCLIEnabled)
 
     BStackLogger.ensureLogsFolder()
     const filePath = path.join(BStackLogger.logFolderPath, 'funnelData.json')
@@ -98,7 +117,7 @@ function getProductList(config: BrowserStackConfig) {
     return products
 }
 
-function buildEventData(eventType: string, config: BrowserStackConfig): any {
+function buildEventData(eventType: string, config: BrowserStackConfig, isCLIEnabled = false): any {
     const eventProperties: any = {
         // Framework Details
         language_framework: getLanguageFramework(config.framework),
@@ -121,6 +140,9 @@ function buildEventData(eventType: string, config: BrowserStackConfig): any {
 
         // framework details
         framework: config.framework,
+
+        // CLI details
+        isCLIEnabled: isCLIEnabled,
     }
     if (TestOpsConfig.getInstance().buildHashedId) {
         eventProperties.testhub_uuid = TestOpsConfig.getInstance().buildHashedId

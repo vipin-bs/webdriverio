@@ -1,62 +1,62 @@
-import { hostname, platform, type, version, arch } from 'node:os'
 import fs from 'node:fs'
-import zlib from 'node:zlib'
-import { promisify } from 'node:util'
 import http from 'node:http'
 import https from 'node:https'
+import { arch, hostname, platform, type, version } from 'node:os'
 import path from 'node:path'
-import util from 'node:util'
+import util, { promisify } from 'node:util'
+import zlib from 'node:zlib'
 
+import type { AfterCommandArgs, BeforeCommandArgs } from '@wdio/reporter'
 import type { Capabilities, Frameworks, Options } from '@wdio/types'
-import type { BeforeCommandArgs, AfterCommandArgs } from '@wdio/reporter'
 
-import got, { HTTPError } from 'got'
-import type { Method } from 'got'
+import type { StartBinSessionResponse } from '@browserstack/wdio-browserstack-service'
+import type { ColorName } from 'chalk'
+import { FormData } from 'formdata-node'
+import { fileFromPath } from 'formdata-node/file-from-path'
 import type { GitRepoInfo } from 'git-repo-info'
 import gitRepoInfo from 'git-repo-info'
 import gitconfig from 'gitconfiglocal'
-import type { ColorName } from 'chalk'
-import { FormData } from 'formdata-node'
+import type { Method } from 'got'
+import got, { HTTPError } from 'got'
 import { performance } from 'node:perf_hooks'
-import logPatcher from './logPatcher.js'
-import PerformanceTester from './instrumentation/performance/performance-tester.js'
-import * as PERFORMANCE_SDK_EVENTS from './instrumentation/performance/constants.js'
-import { logBuildError, handleErrorForObservability, handleErrorForAccessibility, getProductMapForBuildStartCall } from './testHub/utils.js'
+import tar from 'tar'
+import { BStackLogger } from './bstackLogger.js'
+import APIUtils from './cli/apiUtils.js'
 import type BrowserStackConfig from './config.js'
-
-import type { UserConfig, UploadType, LaunchResponse, BrowserstackConfig, TOStopData } from './types.js'
-import type { ITestCaseHookParameter } from './cucumber-types.js'
 import {
-    BROWSER_DESCRIPTION,
-    UPLOAD_LOGS_ENDPOINT,
-    consoleHolder,
-    BSTACK_A11Y_POLLING_TIMEOUT,
-    TESTOPS_SCREENSHOT_ENV,
+    APP_ALLY_ISSUES_ENDPOINT,
+    APP_ALLY_ISSUES_SUMMARY_ENDPOINT,
+    BROWSERSTACK_ACCESSIBILITY,
+    BROWSERSTACK_OBSERVABILITY,
+    BROWSERSTACK_TESTHUB_JWT,
     BROWSERSTACK_TESTHUB_UUID,
+    BROWSERSTACK_TEST_PLAN_ID,
+    BROWSERSTACK_TEST_REPORTING,
+    BROWSER_DESCRIPTION,
+    BSTACK_A11Y_POLLING_TIMEOUT,
+    CLI_DEBUG_LOGS_FILE,
+    GIT_META_DATA_TRUNCATED,
+    MAX_GIT_META_DATA_SIZE_IN_BYTES,
     PERF_MEASUREMENT_ENV,
     RERUN_ENV,
     TESTOPS_BUILD_COMPLETED_ENV,
-    BROWSERSTACK_TESTHUB_JWT,
-    BROWSERSTACK_OBSERVABILITY,
-    BROWSERSTACK_TEST_REPORTING,
-    BROWSERSTACK_ACCESSIBILITY,
-    MAX_GIT_META_DATA_SIZE_IN_BYTES,
-    GIT_META_DATA_TRUNCATED,
-    APP_ALLY_ISSUES_SUMMARY_ENDPOINT,
-    APP_ALLY_ISSUES_ENDPOINT,
+    TESTOPS_SCREENSHOT_ENV,
     TEST_REPORTING_PROJECT_NAME,
-    CLI_DEBUG_LOGS_FILE,
-    WDIO_NAMING_PREFIX
+    UPLOAD_LOGS_ENDPOINT,
+    WDIO_NAMING_PREFIX,
+    consoleHolder
 } from './constants.js'
 import CrashReporter from './crash-reporter.js'
-import { BStackLogger } from './bstackLogger.js'
+import type { ITestCaseHookParameter } from './cucumber-types.js'
+import * as PERFORMANCE_SDK_EVENTS from './instrumentation/performance/constants.js'
+import PerformanceTester from './instrumentation/performance/performance-tester.js'
+import logPatcher from './logPatcher.js'
 import AccessibilityScripts from './scripts/accessibility-scripts.js'
-import UsageStats from './testOps/usageStats.js'
+import { getProductMapForBuildStartCall, handleErrorForAccessibility, handleErrorForObservability, logBuildError } from './testHub/utils.js'
 import TestOpsConfig from './testOps/testOpsConfig.js'
-import type { StartBinSessionResponse } from '@browserstack/wdio-browserstack-service'
-import APIUtils from './cli/apiUtils.js'
-import tar from 'tar'
-import { fileFromPath } from 'formdata-node/file-from-path'
+import UsageStats from './testOps/usageStats.js'
+import { OrchestrationUtils } from './testorchestration/testorcherstrationutils.js'
+import type { BrowserstackConfig, LaunchResponse, TOStopData, UploadType, UserConfig } from './types.js'
 
 const pGitconfig = promisify(gitconfig)
 
@@ -406,7 +406,11 @@ export const launchTestSession = PerformanceTester.measureWrapper(PERFORMANCE_SD
             }
         },
         product_map: getProductMapForBuildStartCall(bStackConfig, accessibilityAutomation),
-        config: {}
+        config: {},
+        test_orchestration: OrchestrationUtils.getInstance(config)?.getBuildStartData() || {},
+        test_management: {
+            test_plan_id: getTestPlanId(options)
+        }
     }
 
     if (accessibilityAutomation && (isTurboScale(options) || data.browserstackAutomation === false)){
@@ -433,6 +437,7 @@ export const launchTestSession = PerformanceTester.measureWrapper(PERFORMANCE_SD
         }).json()
         delete data?.accessibility?.settings?.includeEncodedExtension
         BStackLogger.debug(`[Start_Build] Success response: ${JSON.stringify(response)}`)
+        BStackLogger.debug(`Test Plan Id sent in request: ${getTestPlanId(options)}`)
         process.env[TESTOPS_BUILD_COMPLETED_ENV] = 'true'
         if (response.jwt) {
             process.env[BROWSERSTACK_TESTHUB_JWT] = response.jwt
@@ -1024,7 +1029,15 @@ export function getUniqueIdentifierForCucumber(world: ITestCaseHookParameter): s
 }
 
 export function getCloudProvider(browser: WebdriverIO.Browser | WebdriverIO.MultiRemoteBrowser): string {
-    if (browser.options && browser.options.hostname && browser.options.hostname.includes('browserstack')) {
+    if (browser && 'instances' in browser) {
+        // Loop through all instances
+        for (const instanceName of browser.instances) {
+            const instance = (browser as any)[instanceName] as WebdriverIO.Browser
+            if (instance.options && instance.options.hostname && instance.options.hostname.includes('browserstack')) {
+                return 'browserstack'
+            }
+        }
+    } else if (browser.options && browser.options.hostname && browser.options.hostname.includes('browserstack')) { // Single browser instance
         return 'browserstack'
     }
     return 'unknown_grid'
@@ -1032,6 +1045,28 @@ export function getCloudProvider(browser: WebdriverIO.Browser | WebdriverIO.Mult
 
 export function isBrowserstackSession(browser?: WebdriverIO.Browser | WebdriverIO.MultiRemoteBrowser) {
     return browser && getCloudProvider(browser).toLowerCase() === 'browserstack'
+}
+
+/**
+ * Sets a BrowserStack annotation with the provided message
+ * @param browser - The WebDriver browser instance
+ * @param message - The annotation message to set
+ * @param isAccessibilityEnabled - Whether accessibility is enabled for the session
+ */
+export async function setBrowserstackAnnotation(
+    browser: WebdriverIO.Browser,
+    message: string,
+    isAccessibilityEnabled: boolean
+): Promise<void> {
+    if (isAccessibilityEnabled && isBrowserstackSession(browser)) {
+        await browser.execute(`browserstack_executor: ${JSON.stringify({
+            action: 'annotate',
+            arguments: {
+                data: message,
+                level: 'info'
+            }
+        })}`)
+    }
 }
 
 export function getScenarioExamples(world: ITestCaseHookParameter) {
@@ -1302,6 +1337,26 @@ export function getObservabilityBuildTags(options: BrowserstackConfig & Options.
         return [bstackBuildTag]
     }
     return []
+}
+
+export function getTestPlanId(options: BrowserstackConfig & Options.Testrunner): string | undefined {
+    if (process.env[BROWSERSTACK_TEST_PLAN_ID]) {
+        return process.env[BROWSERSTACK_TEST_PLAN_ID]
+    }
+    const CLI_ARG = '--browserstack.testManagementOptions.testPlanId'
+    const argIndex = process.argv.indexOf(CLI_ARG)
+    if (argIndex !== -1 && process.argv[argIndex + 1]) {
+        return process.argv[argIndex + 1]
+    }
+    const argWithEquals = process.argv.find((arg) => arg.startsWith(`${CLI_ARG}=`))
+    if (argWithEquals) {
+        return argWithEquals.split('=')[1]
+    }
+    const testPlanId = options.testManagementOptions?.testPlanId
+    if (typeof testPlanId === 'string' && testPlanId.trim().length > 0) {
+        return testPlanId.trim()
+    }
+    return undefined
 }
 
 export function getBrowserStackUser(config: Options.Testrunner) {
@@ -1681,6 +1736,23 @@ export function getBooleanValueFromString(value: string | undefined): boolean {
     return ['true'].includes(value.trim().toLowerCase())
 }
 
+/**
+ * Validate boolean value from mixed types (boolean or string)
+ * Only accepts true boolean or string "true" (case insensitive)
+ */
+export function isValidEnabledValue(value: boolean | string | undefined): boolean {
+    if (value === undefined || value === null) {
+        return false
+    }
+    if (typeof value === 'boolean') {
+        return value === true
+    }
+    if (typeof value === 'string') {
+        return getBooleanValueFromString(value)
+    }
+    return false
+}
+
 export function mergeDeep(target: Record<string, any>, ...sources: any[]): Record<string, any> {
     if (!sources.length) {return target}
     const source = sources.shift()
@@ -1792,4 +1864,37 @@ export function getMochaTestHierarchy(test: Frameworks.Test) {
         value.push(test.fullName.replace(new RegExp(' ' + test.description + '$'), ''))
     }
     return value.reverse()
+}
+
+/**
+ * Checks if the capabilities represent a multiremote configuration
+ * @param capabilities - The capabilities to check
+ * @returns true if capabilities represent any multiremote configuration (regular or parallel)
+ *
+ * @example
+ * Regular multiremote (object):
+ * { browserA: { capabilities: {...} }, browserB: { capabilities: {...} } }
+ *
+ * Parallel multiremote (array with nested structure):
+ * [{ browserA: { capabilities: {...} }, browserB: { capabilities: {...} } }]
+ *
+ * Regular capabilities (array):
+ * [{ browserName: 'chrome', ... }]
+ */
+export function isMultiRemoteCaps(capabilities: Capabilities.RemoteCapabilities): boolean {
+    // Regular multiremote is an object (not array)
+    if (!Array.isArray(capabilities)) {
+        return true
+    }
+
+    // Empty array is not multiremote
+    if (capabilities.length === 0) {
+        return false
+    }
+
+    // Parallel multiremote is an array with nested capabilities structure
+    return capabilities.every(cap =>
+        Object.values(cap).length > 0 &&
+        Object.values(cap).every(c => c !== null && typeof c === 'object' && (c as { capabilities: WebdriverIO.Capabilities }).capabilities)
+    )
 }

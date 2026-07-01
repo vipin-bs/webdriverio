@@ -32,7 +32,7 @@ import { EVENTS as PerformanceEvents } from '../instrumentation/performance/cons
 import { BStackLogger as logger } from './cliLogger.js'
 import { UPDATED_CLI_ENDPOINT } from '../constants.js'
 import type { Options, Capabilities } from '@wdio/types'
-import type { BrowserstackConfig, BrowserstackOptions, TestObservabilityOptions } from '../types.js'
+import type { BrowserstackConfig, BrowserstackOptions, TestManagementOptions, TestObservabilityOptions } from '../types.js'
 import { TestFrameworkConstants } from './frameworks/constants/testFrameworkConstants.js'
 import APIUtils from './apiUtils.js'
 
@@ -63,6 +63,7 @@ export class CLIUtils {
             modifiedOpts.browserStackLocalOptions = modifiedOpts.opts
             delete modifiedOpts.opts
         }
+        delete modifiedOpts.testManagementOptions
 
         modifiedOpts.testContextOptions = {
             skipSessionName: isFalse(modifiedOpts.setSessionName),
@@ -88,6 +89,10 @@ export class CLIUtils {
 
         const isNonBstackA11y = isTurboScale(options) || !shouldAddServiceVersion(config as Options.Testrunner, options.testObservability)
         const observabilityOptions: TestObservabilityOptions = options.testObservabilityOptions || {}
+        const testManagementOptions: TestManagementOptions = options.testManagementOptions || {}
+        const testPlanId = typeof testManagementOptions.testPlanId === 'string'
+            ? testManagementOptions.testPlanId.trim()
+            : ''
         const binconfig: Record<string, unknown> = {
             userName: observabilityOptions.user || config.user,
             accessKey: observabilityOptions.key || config.key,
@@ -100,6 +105,11 @@ export class CLIUtils {
         binconfig.buildName = observabilityOptions.buildName || binconfig.buildName
         binconfig.projectName = observabilityOptions.projectName || binconfig.projectName
         binconfig.buildTag = this.getObservabilityBuildTags(observabilityOptions, buildTag) || []
+        if (testPlanId.length > 0) {
+            binconfig.testManagementOptions = {
+                testPlanId
+            }
+        }
 
         let caps = capabilities
         if (capabilities && !Array.isArray(capabilities)) {
@@ -174,7 +184,8 @@ export class CLIUtils {
             sdk_language: this.getSdkLanguage(),
         }
         if (!isNullOrEmpty(existingCliPath)) {
-            queryParams.cli_version = await this.runShellCommand(`${existingCliPath} version`)
+            const nullDevice = platform() === 'win32' ? 'NUL' : '/dev/null'
+            queryParams.cli_version = await this.runShellCommand(`${existingCliPath} version 2>${nullDevice}`)
         }
         const response = await this.requestToUpdateCLI(queryParams, config)
         if (nestedKeyValue(response, ['updated_cli_version'])) {
@@ -464,6 +475,26 @@ export class CLIUtils {
      */
     static getCurrentInstanceName() {
         return `${process.pid}:${threadId}`
+    }
+
+    /**
+     * Generate a unique client worker identifier combining thread ID and process ID.
+     * This identifier is used to track worker-specific events and performance metrics
+     * across distributed test execution. Format matches the Python SDK implementation
+     * for consistency across SDKs.
+     *
+     * Format: "threadId-processId"
+     *
+     * @param context - Optional execution context with threadId and processId
+     * @returns Worker ID string in format "threadId-processId"
+     * @example
+     * const workerId = CLIUtils.getClientWorkerId() // Returns "1-12345"
+     * const workerId = CLIUtils.getClientWorkerId({ threadId: 123, processId: 456 }) // Returns "123-456"
+     */
+    static getClientWorkerId(context?: { threadId?: string | number; processId?: string | number }): string {
+        const workerThreadId = context?.threadId?.toString() || threadId.toString()
+        const workerProcessId = context?.processId?.toString() || process.pid.toString()
+        return `${workerThreadId}-${workerProcessId}`
     }
 
     /**

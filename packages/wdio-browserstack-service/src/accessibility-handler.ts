@@ -67,7 +67,8 @@ import {
     isTrue,
     validateCapsWithAppA11y,
     getAppA11yResults,
-    isFalse
+    isFalse,
+    setBrowserstackAnnotation
 } from './util.js'
 import accessibilityScripts from './scripts/accessibility-scripts.js'
 import PerformanceTester from './instrumentation/performance/performance-tester.js'
@@ -105,7 +106,7 @@ class _AccessibilityHandler {
         const caps = (this._browser as WebdriverIO.Browser).capabilities as WebdriverIO.Capabilities
 
         this._platformA11yMeta = {
-            browser_name: caps.browserName,
+            browser_name: caps?.browserName,
             browser_version: caps?.browserVersion || (caps as Capabilities.DesiredCapabilities)?.version || 'latest',
             platform_name: caps?.platformName,
             platform_version: this._getCapabilityValue(caps, 'appium:platformVersion', 'platformVersion'),
@@ -156,6 +157,8 @@ class _AccessibilityHandler {
     }
 
     async before (sessionId: string) {
+        PerformanceTester.start(PERFORMANCE_SDK_EVENTS.CONFIG_EVENTS.ACCESSIBILITY)
+
         this._sessionId = sessionId
         this._accessibility = isTrue(this._getCapabilityValue(this._caps, 'accessibility', 'browserstack.accessibility'))
 
@@ -212,6 +215,10 @@ class _AccessibilityHandler {
         }
 
         browserWithA11y.startA11yScanning = async () => {
+            if (this._testIdentifier === null){
+                BStackLogger.warn('Accessibility scanning cannot be started from outside the test')
+                return
+            }
             AccessibilityHandler._a11yScanSessionMap[sessionId] = true
             this._testMetadata[this._testIdentifier as string] = {
                 scanTestForAccessibility : true,
@@ -221,6 +228,10 @@ class _AccessibilityHandler {
         }
 
         browserWithA11y.stopA11yScanning = async () => {
+            if (this._testIdentifier === null){
+                BStackLogger.warn('Accessibility scanning cannot be stopped from outside the test')
+                return
+            }
             AccessibilityHandler._a11yScanSessionMap[sessionId] = false
             await this._setAnnotation('Accessibility scanning has stopped')
         }
@@ -238,6 +249,8 @@ class _AccessibilityHandler {
                 const browser = this._browser as WebdriverIO.Browser
                 browser.overwriteCommand(command.name, this.commandWrapper.bind(this, command), command.class === 'Element')
             })
+
+        PerformanceTester.end(PERFORMANCE_SDK_EVENTS.CONFIG_EVENTS.ACCESSIBILITY)
     }
 
     async beforeTest (suiteTitle: string | undefined, test: Frameworks.Test) {
@@ -462,15 +475,7 @@ class _AccessibilityHandler {
     }
 
     private async _setAnnotation(message: string) {
-        if (this._accessibility && isBrowserstackSession(this._browser)) {
-            await (this._browser as WebdriverIO.Browser).execute(`browserstack_executor: ${JSON.stringify({
-                action: 'annotate',
-                arguments: {
-                    data: message,
-                    level: 'info'
-                }
-            })}`)
-        }
+        await setBrowserstackAnnotation(this._browser as WebdriverIO.Browser, message, Boolean(this._accessibility))
     }
 }
 

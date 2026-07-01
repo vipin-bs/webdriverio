@@ -36,12 +36,17 @@ import type {
     TestSessionEventResponse,
     LogCreatedEventResponse,
     DriverInitResponse,
-    FetchDriverExecuteParamsEventResponse
+    FetchDriverExecuteParamsEventResponse,
+    TestOrchestrationRequest,
+    TestOrchestrationResponse
 } from '@browserstack/wdio-browserstack-service'
 
 import PerformanceTester from '../instrumentation/performance/performance-tester.js'
-import { EVENTS as PerformanceEvents } from '../instrumentation/performance/constants.js'
+import * as PERFORMANCE_SDK_EVENTS from '../instrumentation/performance/constants.js'
 import { BStackLogger } from './cliLogger.js'
+
+// Increased from default 4 MB to accommodate large extension payloads
+const GRPC_MESSAGE_LIMIT = 20 * 1024 * 1024 // 20 MB in bytes
 
 /**
  * GrpcClient - Singleton class for managing gRPC client connections
@@ -69,6 +74,17 @@ export class GrpcClient {
             GrpcClient.#instance = new GrpcClient()
         }
         return GrpcClient.#instance
+    }
+
+    /**
+     * Helper method to get client worker ID from execution context or current context.
+     * This provides a consistent way to extract worker identification across all gRPC calls.
+     *
+     * @param executionContext - Optional execution context with threadId and processId
+     * @returns Worker ID string in format "threadId-processId"
+     */
+    private getClientWorkerIdFromContext(executionContext?: { threadId?: string; processId?: string }): string {
+        return CLIUtils.getClientWorkerId(executionContext)
     }
 
     /**
@@ -109,27 +125,31 @@ export class GrpcClient {
             throw new Error('Unable to determine gRPC server listen address')
         }
 
+        const channelOptions = {
+            'grpc.keepalive_time_ms': 10000,
+            'grpc.max_send_message_length': GRPC_MESSAGE_LIMIT,
+            'grpc.max_receive_message_length': GRPC_MESSAGE_LIMIT,
+        }
+
         // Create a channel
         this.channel = new grpcChannel(
             listenAddress,
             grpcCredentials.createInsecure(),
-            {
-                'grpc.keepalive_time_ms': 10000
-            }
+            channelOptions
         )
 
         // Create a client using the channel
         this.client = new SDKClient(
             listenAddress,
             grpcCredentials.createInsecure(),
-            {}
+            channelOptions
         )
 
         this.logger.info(`Connected to gRPC server at ${listenAddress}`)
     }
 
     async startBinSession(wdioConfig: string) {
-        PerformanceTester.start(PerformanceEvents.SDK_START_BIN_SESSION)
+        PerformanceTester.start(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_START_BIN_SESSION)
         this.logger.debug('startBinSession: Calling startBinSession')
 
         try {
@@ -146,6 +166,7 @@ export class GrpcClient {
             }
 
             // Create StartBinSessionRequest
+            const clientWorkerId = CLIUtils.getClientWorkerId()
             const request = StartBinSessionRequestConstructor.create({
                 binSessionId: this.binSessionId,
                 sdkLanguage: CLIUtils.getSdkLanguage(),
@@ -159,21 +180,25 @@ export class GrpcClient {
                 testFramework: testFrameworkDetail.name,
                 wdioConfig: wdioConfig,
             })
+            // Add clientWorkerId and platformIndex to request (proto fields 500 & 501)
+            ;(request as any).clientWorkerId = clientWorkerId
+            ;(request as any).platformIndex = '0' // Default platform index for main process
+            this.logger.debug(`StartBinSession with clientWorkerId: ${clientWorkerId}, platformIndex: 0`)
 
             const startBinSessionPromise = promisify(this.client!.startBinSession).bind(this.client!) as (arg0: StartBinSessionRequest) => Promise<StartBinSessionResponse>
             try {
                 const response = await startBinSessionPromise(request)
                 this.logger.info('StartBinSession successful')
-                PerformanceTester.end(PerformanceEvents.SDK_START_BIN_SESSION)
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_START_BIN_SESSION)
                 return response
             } catch (error: unknown) {
                 this.logger.error(`StartBinSession error: ${util.format(error)}`)
-                PerformanceTester.end(PerformanceEvents.SDK_START_BIN_SESSION, false, util.format(error))
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_START_BIN_SESSION, false, util.format(error))
                 throw error
             }
         } catch (error) {
             this.logger.error(`Error in startBinSession: ${util.format(error)}`)
-            PerformanceTester.end(PerformanceEvents.SDK_START_BIN_SESSION, false, util.format(error))
+            PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_START_BIN_SESSION, false, util.format(error))
             throw error
         }
     }
@@ -183,7 +208,7 @@ export class GrpcClient {
      * @returns {Promise<Object>} The response from the gRPC call
      */
     async connectBinSession() {
-        PerformanceTester.start(PerformanceEvents.SDK_CONNECT_BIN_SESSION)
+        PerformanceTester.start(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CONNECT_BIN_SESSION)
         this.logger.debug('Connecting bin session')
 
         try {
@@ -191,24 +216,28 @@ export class GrpcClient {
                 this.logger.info('No gRPC client not initialized.')
             }
 
+            const clientWorkerId = CLIUtils.getClientWorkerId()
             const request = ConnectBinSessionRequestConstructor.create({
                 binSessionId: this.binSessionId,
             })
+            // Add clientWorkerId to request (proto field 500)
+            ;(request as any).clientWorkerId = clientWorkerId
+            this.logger.debug(`ConnectBinSession with clientWorkerId: ${clientWorkerId}`)
 
             const connectBinSessionPromise = promisify(this.client!.connectBinSession).bind(this.client!) as (arg0: ConnectBinSessionRequest) => Promise<ConnectBinSessionResponse>
             try {
                 const response =  await connectBinSessionPromise(request)
                 this.logger.info('ConnectBinSession successful')
-                PerformanceTester.end(PerformanceEvents.SDK_CONNECT_BIN_SESSION)
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CONNECT_BIN_SESSION)
                 return response
             } catch (error: unknown) {
                 const errorMessage = util.format(error)
                 this.logger.error(`ConnectBinSession error: ${errorMessage}`)
-                PerformanceTester.end(PerformanceEvents.SDK_CONNECT_BIN_SESSION, false, errorMessage)
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CONNECT_BIN_SESSION, false, errorMessage)
                 throw error
             }
         } catch (error) {
-            PerformanceTester.end(PerformanceEvents.SDK_CONNECT_BIN_SESSION, false, util.format(error))
+            PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CONNECT_BIN_SESSION, false, util.format(error))
             this.logger.error(`Error in connectBinSession: ${util.format(error)}`)
             throw error
         }
@@ -220,7 +249,7 @@ export class GrpcClient {
      * @private
      */
     async stopBinSession() {
-        PerformanceTester.start(PerformanceEvents.SDK_CLI_ON_STOP)
+        PerformanceTester.start(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CLI_ON_STOP)
         this.logger.debug('Stopping bin session')
 
         try {
@@ -232,35 +261,43 @@ export class GrpcClient {
                 this.logger.info('No gRPC client not initialized.')
             }
 
+            const clientWorkerId = CLIUtils.getClientWorkerId()
             const request = StopBinSessionRequestConstructor.create({
                 binSessionId: this.binSessionId
             })
+            // Add clientWorkerId to request (proto field 500)
+            ;(request as any).clientWorkerId = clientWorkerId
+            this.logger.debug(`StopBinSession with clientWorkerId: ${clientWorkerId}`)
 
             // Get response from gRPC call
             const stopBinSessionPromise = promisify(this.client!.stopBinSession).bind(this.client!)
             try {
                 const response = await stopBinSessionPromise(request)
                 this.logger.info('StopBinSession successful')
-                PerformanceTester.end(PerformanceEvents.SDK_CLI_ON_STOP)
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CLI_ON_STOP)
                 return response
             } catch (error: unknown) {
                 const errorMessage = util.format(error)
                 this.logger.error(`StopBinSession error: ${errorMessage}`)
-                PerformanceTester.end(PerformanceEvents.SDK_CLI_ON_STOP, false, errorMessage)
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CLI_ON_STOP, false, errorMessage)
                 throw error
             }
         } catch (error) {
-            PerformanceTester.end(PerformanceEvents.SDK_CLI_ON_STOP, false, util.format(error))
+            PerformanceTester.end(PERFORMANCE_SDK_EVENTS.EVENTS.SDK_CLI_ON_STOP, false, util.format(error))
             this.logger.error(`Error in stopBinSession: ${util.format(error)}`)
         }
     }
 
     async testSessionEvent(data: Omit<TestSessionEventRequest, 'binSessionId'>) {
-        this.logger.info('Sending TestSessionEvent')
+        PerformanceTester.start(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.TEST_SESSION)
+        const workerId = this.getClientWorkerIdFromContext(data.executionContext)
+        this.logger.info(`Sending TestSessionEvent for worker: ${workerId}`)
 
         try {
             if (!this.client) {
                 this.logger.info('No gRPC client not initialized.')
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.TEST_SESSION, false, 'gRPC client not initialized')
+                return
             }
             const { platformIndex, testFrameworkName, testFrameworkVersion, testFrameworkState, testHookState, testUuid, automationSessions, capabilities, executionContext } = data
             const sessions = automationSessions.map((automationSession) => {
@@ -290,19 +327,24 @@ export class GrpcClient {
                 automationSessions: sessions,
                 executionContext: executionContextBuilder,
             })
+            // Add clientWorkerId to request (proto field 500) - already computed above
+            ;(request as any).clientWorkerId = workerId
 
             const testSessionEventPromise = promisify(this.client!.testSessionEvent).bind(this.client!) as (arg0: TestSessionEventRequest) => Promise<TestSessionEventResponse>
             try {
                 const response = await testSessionEventPromise(request)
-                this.logger.info('testSessionEvent successful')
+                this.logger.info(`testSessionEvent successful for worker: ${workerId}`)
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.TEST_SESSION)
                 return response
             } catch (error: unknown) {
                 const errorMessage = util.format(error)
                 this.logger.error(`testSessionEvent error: ${errorMessage}`)
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.TEST_SESSION, false, errorMessage)
                 throw error
             }
         } catch (error) {
             this.logger.error(`Error in TestSessionEvent: ${util.format(error)}`)
+            PerformanceTester.end(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.TEST_SESSION, false, util.format(error))
             throw error
         }
     }
@@ -313,10 +355,18 @@ export class GrpcClient {
      */
 
     async testFrameworkEvent(data: Omit<TestFrameworkEventRequest, 'binSessionId'>) {
-        this.logger.info('Sending TestFrameworkEvent')
+        // Generate unique event ID per call to avoid timing conflicts
+        const uniqueEventId = `${PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.TEST_FRAMEWORK}-${Date.now()}-${Math.random().toString(36).substring(7)}`
+        PerformanceTester.start(uniqueEventId)
+
+        const workerId = this.getClientWorkerIdFromContext(data.executionContext)
+        this.logger.info(`Sending TestFrameworkEvent for worker: ${workerId}`)
+
         try {
             if (!this.client) {
                 this.logger.info('No gRPC client not initialized.')
+                PerformanceTester.end(uniqueEventId, false, 'gRPC client not initialized')
+                return
             }
             const { platformIndex, testFrameworkName, testFrameworkVersion, testFrameworkState, testHookState, startedAt, endedAt, uuid, eventJson, executionContext } = data
             const executionContextBuilder = ExecutionContextConstructor.create({
@@ -337,19 +387,31 @@ export class GrpcClient {
                 eventJson: eventJson,
                 executionContext: executionContextBuilder,
             })
+            // Add clientWorkerId to request (proto field 500) - already computed above
+            ;(request as any).clientWorkerId = workerId
 
             const testFrameworkEventPromise = promisify(this.client!.testFrameworkEvent).bind(this.client!) as (arg0: TestFrameworkEventRequest) => Promise<TestFrameworkEventResponse>
             try {
                 const response = await testFrameworkEventPromise(request)
-                this.logger.info('testFrameworkEvent successful')
+                this.logger.info(`testFrameworkEvent successful for worker: ${workerId}`)
+
+                // End with additional context for debugging
+                PerformanceTester.end(uniqueEventId, true, undefined, {
+                    testState: testFrameworkState,
+                    hookState: testHookState,
+                    uuid: uuid,
+                    worker: workerId
+                })
                 return response
             } catch (error: unknown) {
                 const errorMessage = util.format(error)
                 this.logger.error(`testFrameworkEvent error: ${errorMessage}`)
+                PerformanceTester.end(uniqueEventId, false, errorMessage)
                 throw error
             }
         } catch (error) {
             this.logger.error(`Error in TestFrameworkEvent: ${util.format(error)}`)
+            PerformanceTester.end(uniqueEventId, false, util.format(error))
             throw error
         }
     }
@@ -366,12 +428,16 @@ export class GrpcClient {
                 this.logger.info('No gRPC client not initialized.')
             }
             const { platformIndex, ref, userInputParams } = data
+            const clientWorkerId = CLIUtils.getClientWorkerId()
             const request = DriverInitRequestConstructor.create({
                 binSessionId: this.binSessionId,
                 platformIndex: platformIndex,
                 ref: ref,
                 userInputParams: userInputParams,
-            })
+            });
+            // Add clientWorkerId to request (proto field 500)
+            (request as any).clientWorkerId = clientWorkerId
+            this.logger.debug(`DriverInitEvent with clientWorkerId: ${clientWorkerId}`)
 
             const driverInitEventPromise = promisify(this.client!.driverInit).bind(this.client!) as (arg0: DriverInitRequest) => Promise<DriverInitResponse>
             try {
@@ -390,12 +456,16 @@ export class GrpcClient {
     }
 
     async logCreatedEvent(data: Omit<LogCreatedEventRequest, 'binSessionId'>) {
+        PerformanceTester.start(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.LOG_CREATED)
         this.logger.info('Sending LogCreatedEvent')
         try {
             if (!this.client) {
                 this.logger.info('No gRPC client not initialized.')
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.LOG_CREATED, false, 'gRPC client not initialized')
+                return
             }
             const { platformIndex, logs, executionContext } = data
+            const clientWorkerId = this.getClientWorkerIdFromContext(executionContext)
             const executionContextBuilder = ExecutionContextConstructor.create({
                 processId: executionContext?.processId,
                 threadId: executionContext?.threadId,
@@ -423,20 +493,26 @@ export class GrpcClient {
                 logs: logEntries,
                 executionContext: executionContextBuilder,
             })
+            // Add clientWorkerId to request (proto field 500)
+            ;(request as any).clientWorkerId = clientWorkerId
+            this.logger.debug(`LogCreatedEvent with clientWorkerId: ${clientWorkerId}`)
 
             const logCreatedEventPromise = promisify(this.client!.logCreatedEvent).bind(this.client!) as (arg0: LogCreatedEventRequest) => Promise<LogCreatedEventResponse>
             try {
                 this.logger.debug('logCreatedEvent payload:' + JSON.stringify(request))
                 const response = await logCreatedEventPromise(request)
                 this.logger.info('logCreatedEvent successful')
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.LOG_CREATED)
                 return response
             } catch (error: unknown) {
                 const errorMessage = util.format(error)
                 this.logger.error(`logCreatedEvent error: ${errorMessage}`)
+                PerformanceTester.end(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.LOG_CREATED, false, errorMessage)
                 throw error
             }
         } catch (error) {
             this.logger.error(`Error in LogCreatedEvent: ${util.format(error)}`)
+            PerformanceTester.end(PERFORMANCE_SDK_EVENTS.DISPATCHER_EVENTS.LOG_CREATED, false, util.format(error))
             throw error
         }
     }
@@ -448,11 +524,17 @@ export class GrpcClient {
                 this.logger.info('No gRPC client not initialized.')
             }
             const { product, scriptName } = data
+            const platformIndex = (data as any).platformIndex || '0' // Extract platformIndex if provided
+            const clientWorkerId = CLIUtils.getClientWorkerId()
             const request = FetchDriverExecuteParamsEventRequestConstructor.create({
                 binSessionId: this.binSessionId,
                 product: product,
                 scriptName: scriptName,
             })
+            // Add clientWorkerId and platformIndex to request (proto fields 500 & 501)
+            ;(request as any).clientWorkerId = clientWorkerId
+            ;(request as any).platformIndex = platformIndex
+            this.logger.debug(`FetchDriverExecuteParamsEvent with clientWorkerId: ${clientWorkerId}, platformIndex: ${platformIndex}`)
 
             const fetchDriverExecuteParamsEventPromise = promisify(this.client!.fetchDriverExecuteParamsEvent).bind(this.client!) as (arg0: FetchDriverExecuteParamsEventRequest) => Promise<FetchDriverExecuteParamsEventResponse>
             try {
@@ -467,6 +549,57 @@ export class GrpcClient {
         } catch (error) {
             this.logger.error(`Error in fetchDriverExecuteParamsEvent: ${util.format(error)}`)
             throw error
+        }
+    }
+
+    /**
+     * Send TestOrchestration request to get ordered test files
+     * @param {string[]} testFiles - Array of test file paths
+     * @param {string} orchestrationStrategy - The orchestration strategy to use
+     * @param {string} orchestrationMetadata - Additional metadata for orchestration
+     * @returns {Promise<string[]|null>} Array of ordered test files or null if failed
+     */
+    async testOrchestrationSession(testFiles: string[], orchestrationStrategy: string, orchestrationMetadata: string): Promise<string[] | null> {
+
+        try {
+            if (!this.client) {
+                this.logger.error('gRPC client is not initialized. Cannot perform test orchestration.')
+                return null
+            }
+
+            if (!this.binSessionId) {
+                this.logger.error('binSessionId is not available. Cannot perform test orchestration.')
+                return null
+            }
+
+            // Create TestOrchestrationRequest
+            const request: TestOrchestrationRequest = {
+                binSessionId: this.binSessionId,
+                orchestrationStrategy: orchestrationStrategy,
+                testFiles: testFiles,
+                orchestrationMetadata: orchestrationMetadata
+            }
+
+            const testOrchestrationPromise = promisify(this.client!.testOrchestration).bind(this.client!) as (arg0: TestOrchestrationRequest) => Promise<TestOrchestrationResponse>
+
+            try {
+                const response = await testOrchestrationPromise(request)
+                this.logger.debug(`test-orchestration-session=${JSON.stringify(response)}`)
+
+                if (response.success) {
+                    return Array.from(response.orderedTestFiles || [])
+                }
+
+                this.logger.warn('Test orchestration was not successful')
+                return null
+            } catch (error: unknown) {
+                const errorMessage = util.format(error)
+                this.logger.error(`TestOrchestration error: ${errorMessage}`)
+                throw error
+            }
+        } catch (error) {
+            this.logger.error(`Error in testOrchestrationSession: ${util.format(error)}`)
+            return null
         }
     }
 
